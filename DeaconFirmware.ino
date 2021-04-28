@@ -1,30 +1,30 @@
 #include <NeoSWSerial.h>
-#include "Timer.h"
+#include <SPI.h>
+#include <SD.h>
 #include "millisDelay.h"
-// OK+DISISOK+DISC:4C000215:2G234454CF6D5A0FADF2F4911BA9FFA7:00000001AC:0CF3EE041CCE:-052OK+DISC:00000000:00000000000000000000000000000000:0000000000:B9782E08068C:-071OK+DISCE
 
-struct Reading
+#include "Timer.h"
+
+namespace sd
 {
-  unsigned long TS;
-  String UUID;
-  String RSSI;
-};
+  void init();
+  void writeReading(unsigned long timestamp, const String& uuid, const String& rssi);
+  String readLine(int line);
+  void wipe();
+}
+
+void setupBT();
+String scan();
+
 
 NeoSWSerial bt{ 2, 3 };
 Timer timer{};
 millisDelay loopDelay;
 
-int numReadings{ 10 };  //
-int scanInterval{ 100 }; // time in ms between scans.
-
-String readLineFromSD(int i);
-
-
-void setupBT();
-
-// returns result if success. returns blank string if failure.
-String scan();
-void writeReading(const Reading& reading); 
+// you could probably do this without keeping track of this, but honestly this is easiest
+int numReadings{ 0 };
+int scanInterval{ 100 };
+String UUID{ "ac5fe330acb93642398e7348894e62ed" };
 
 
 void setup()
@@ -33,7 +33,13 @@ void setup()
   Serial.begin(9600);
   bt.begin(9600);
   loopDelay.start(50);
-  setupBT();
+//  setupBT();
+}
+
+void setupBT()
+{
+  // this needs to setup the bluetooth module
+  // as a beacon and as something that can listen for beacons.
 }
 
 void loop()
@@ -48,41 +54,18 @@ void loop()
       i < rawData.length();
       i = rawData.indexOf('-', i + 1))
     {
-      Reading reading;
-      reading.TS = timer.getTime();
-      reading.UUID = rawData.substring(i /* + something*/, i /* + something*/);
-      reading.RSSI = rawData.substring(i /* + something*/, i /* + something*/);
-      writeReading(reading);
+      if(i >= 57) // prevents out of bounds index
+      {
+        ++numReadings;
+        sd::writeReading(
+          timer.getTime(),
+          rawData.substring(i - 57, i - 26),
+          rawData.substring(i + 1, i + 3)
+        );
+      }
     }
     
     loopDelay.start(scanInterval);
-  }
-}
-
-// Called whenever arduino recieves something from serial port.
-// Will not call when loop() is running, so don't block there.
-void serialEvent()
-{
-  String msg{ Serial.readStringUntil('\n') };
-
-  if (msg == "sync")
-  {
-    // write timestamp
-    Serial.write("ts:");
-    Serial.write(String(timer.getTime()).c_str());
-    Serial.write('\n');
-
-    // write all readings
-    for (int i{}; i < numReadings; ++i)
-      Serial.write(readLineFromSD(i).c_str());
-
-    // notify completion and reset timer
-    Serial.write("done\n");
-    timer.reset();
-  }
-  else
-  {
-    Serial.write("Unrecognized message\n");
   }
 }
 
@@ -99,19 +82,80 @@ String scan()
   return "";
 }
 
-void setupBT()
+void sd::writeReading(unsigned long timestamp, const String& uuid, const String& rssi)
 {
-  // this needs to setup the bluetooth module
-  // as a beacon and as something that can listen for beacons.
+  
+  File file{ SD.open("data.csv", FILE_WRITE) };
+
+  // if the file is available, write to it:
+  if (file)
+  {
+    file.print(timestamp);
+    file.print(',');
+    file.print(uuid);
+    file.print(',');
+    file.print(rssi);
+    file.print('\n');
+    file.close();
+  }
 }
 
-void writeReading(const Reading& reading)
+String sd::readLine(int line)
 {
-  // this needs to write a line to the sd card with each part of reading
+  File file{ SD.open("data.csv") };
+  String ret{};
+
+  for(int i{ 0 }; i < line; ++i)
+  {
+    if(file.available())
+      while(file.read() != '\n');
+    else
+      return "";
+  }    
+  if(file)
+    while(!ret.endsWith("\n") && file.available())
+      ret += (char)file.read();
+  file.close();
+  return ret;
 }
 
-String readLineFromSD(int i)
+void sd::wipe()
 {
-  // this needs to read a line from the sd card, with a newline character at the end.
-  return "FFFFFFFF,db559330acb9442398e3248894e62ed1,069\n";
+  SD.remove("data.csv");
+}
+
+void serialEvent()
+{
+  String msg{ Serial.readStringUntil('\n') };
+
+  if (msg == "sync")
+  {
+    // write timestamp
+    Serial.write("ts:");
+    Serial.write(String(timer.getTime()).c_str());
+    Serial.write('\n');
+    
+    // write beacon's uuid
+    Serial.write("uuid:");
+    Serial.write(UUID.c_str());
+    Serial.write('\n');
+
+    // write all readings
+    for (int i{}; i < numReadings; ++i)
+      Serial.write(sd::readLine(i).c_str());
+
+    // notify completion and reset timer
+    Serial.write("done\n");
+    timer.reset();
+  }
+  else if (msg == "uuid")
+  {
+    Serial.write("uuid:");
+    Serial.write(UUID.c_str());
+    Serial.write('\n');
+  }
+  else
+  {
+    Serial.write("Unrecognized message\n");
+  }
 }
