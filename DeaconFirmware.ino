@@ -40,12 +40,14 @@ String btBuffer{};
 int numReadings{ 0 };
 
 void setup()
-{
-  digitalWrite(LED_BUILTIN, LOW);
+{ 
   Serial.begin(9600);
   bt.begin(9600);
   sd::init();
+  sd::wipe();
+  Serial.write("Checking BT\n");
   checkBT();
+  Serial.write("Cleared boot checks\n");
   loopDelay.start(5000);
 }
 
